@@ -37,4 +37,8 @@ test("login and shipment creation flow scaffold", async ({ page }) => {
 
   await page.getByRole("button", { name: "Create Shipment" }).click();
   await expect(page).toHaveURL(/\/customer\/shipments/);
+
+  await page.getByRole("link", { name: "Track public" }).first().click();
+  await expect(page).toHaveURL(/\/track\//);
+  await expect(page.getByRole("heading", { name: "Track Shipment" })).toBeVisible();
 });

@@ -34,6 +34,9 @@ export default async function StaffDashboardPage() {
         <Link href="/customer/shipments" className="rounded border px-3 py-1">
           View Customer UI
         </Link>
+        <Link href="/staff/shipments" className="rounded border px-3 py-1">
+          Manage Shipment Status
+        </Link>
       </nav>
     </main>
   );

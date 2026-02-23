@@ -5,14 +5,38 @@ export type UserRole = (typeof userRoles)[number];
 
 export const shipmentStatuses = [
   "CREATED",
+  "SCHEDULED_PICKUP",
   "PICKED_UP",
   "IN_TRANSIT",
   "OUT_FOR_DELIVERY",
   "DELIVERED",
   "FAILED_ATTEMPT",
+  "RESCHEDULED",
   "CANCELLED",
+  "RETURN_TO_SENDER",
 ] as const;
 export type ShipmentStatus = (typeof shipmentStatuses)[number];
+
+export const allowedShipmentTransitions: Record<ShipmentStatus, ShipmentStatus[]> = {
+  CREATED: ["SCHEDULED_PICKUP", "CANCELLED"],
+  SCHEDULED_PICKUP: ["PICKED_UP", "RESCHEDULED", "CANCELLED"],
+  PICKED_UP: ["IN_TRANSIT", "RETURN_TO_SENDER"],
+  IN_TRANSIT: ["OUT_FOR_DELIVERY", "RETURN_TO_SENDER"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "FAILED_ATTEMPT", "RETURN_TO_SENDER"],
+  DELIVERED: [],
+  FAILED_ATTEMPT: ["RESCHEDULED", "OUT_FOR_DELIVERY", "RETURN_TO_SENDER"],
+  RESCHEDULED: ["SCHEDULED_PICKUP", "CANCELLED"],
+  CANCELLED: [],
+  RETURN_TO_SENDER: [],
+};
+
+export function getAllowedTransitions(status: ShipmentStatus) {
+  return allowedShipmentTransitions[status];
+}
+
+export function isValidShipmentTransition(from: ShipmentStatus, to: ShipmentStatus) {
+  return allowedShipmentTransitions[from].includes(to);
+}
 
 export const registerDtoSchema = z.object({
   name: z.string().min(2),
@@ -51,9 +75,16 @@ export const createShipmentDtoSchema = z.object({
 });
 export type CreateShipmentDto = z.infer<typeof createShipmentDtoSchema>;
 
+export const locationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+});
+export type Location = z.infer<typeof locationSchema>;
+
 export const updateShipmentStatusDtoSchema = z.object({
   status: z.enum(shipmentStatuses),
   note: z.string().optional(),
+  location: locationSchema.nullable().optional(),
 });
 export type UpdateShipmentStatusDto = z.infer<typeof updateShipmentStatusDtoSchema>;
 
@@ -76,11 +107,59 @@ export const shipmentDetailSchema = shipmentSummarySchema.extend({
   events: z.array(
     z.object({
       id: z.string(),
-      status: z.enum(shipmentStatuses),
+      eventId: z.string(),
+      oldStatus: z.enum(shipmentStatuses),
+      newStatus: z.enum(shipmentStatuses),
       note: z.string().nullable(),
       actorId: z.string(),
+      actorRole: z.enum(userRoles),
+      location: locationSchema.nullable(),
+      occurredAt: z.string(),
       createdAt: z.string(),
     }),
   ),
 });
 export type ShipmentDetail = z.infer<typeof shipmentDetailSchema>;
+
+export const SHIPMENT_STATUS_UPDATED_TOPIC = "shipment.status.updated";
+
+export const shipmentStatusUpdatedEventSchema = z.object({
+  eventType: z.literal(SHIPMENT_STATUS_UPDATED_TOPIC),
+  eventId: z.string().min(1),
+  timestamp: z.string().datetime(),
+  payload: z.object({
+    trackingId: z.string().min(1),
+    oldStatus: z.enum(shipmentStatuses),
+    newStatus: z.enum(shipmentStatuses),
+    location: locationSchema.nullable(),
+    actorId: z.string().min(1),
+    actorRole: z.enum(userRoles),
+  }),
+});
+export type ShipmentStatusUpdatedEvent = z.infer<typeof shipmentStatusUpdatedEventSchema>;
+
+export const trackingTimelineItemSchema = z.object({
+  eventId: z.string(),
+  status: z.enum(shipmentStatuses),
+  occurredAt: z.string(),
+  location: locationSchema.nullable(),
+  actorId: z.string(),
+  actorRole: z.enum(userRoles),
+});
+export type TrackingTimelineItem = z.infer<typeof trackingTimelineItemSchema>;
+
+export const trackingSnapshotSchema = z.object({
+  trackingId: z.string(),
+  currentStatus: z.enum(shipmentStatuses),
+  currentStatusAt: z.string(),
+  lastEventId: z.string(),
+  lastLocation: locationSchema.nullable(),
+  updatedAt: z.string(),
+});
+export type TrackingSnapshot = z.infer<typeof trackingSnapshotSchema>;
+
+export const trackShipmentResponseSchema = z.object({
+  snapshot: trackingSnapshotSchema,
+  timeline: z.array(trackingTimelineItemSchema),
+});
+export type TrackShipmentResponse = z.infer<typeof trackShipmentResponseSchema>;

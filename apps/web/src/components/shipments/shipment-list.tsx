@@ -53,6 +53,9 @@ export function ShipmentList() {
           <Link className="mt-2 inline-block text-sm text-blue-600" href={`/shipments/${shipment.trackingId}`}>
             View details
           </Link>
+          <Link className="mt-2 ml-3 inline-block text-sm text-blue-600" href={`/track/${shipment.trackingId}`}>
+            Track public
+          </Link>
         </article>
       ))}
     </div>
