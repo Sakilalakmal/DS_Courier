@@ -12,9 +12,11 @@ describe("Shipments API (integration)", () => {
     addresses: new Map<string, any>(),
     shipments: new Map<string, any>(),
     events: [] as any[],
+    outbox: [] as any[],
   };
 
-  const prismaMock = {
+  const prismaMock: any = {
+    $transaction: jest.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prismaMock)),
     address: {
       create: jest.fn(async ({ data }) => {
         const id = `addr-${db.addresses.size + 1}`;
@@ -38,9 +40,16 @@ describe("Shipments API (integration)", () => {
       findUnique: jest.fn(async ({ where, include }) => {
         const shipment = db.shipments.get(where.trackingId);
         if (!shipment) return null;
+
         if (include?.events) {
-          return { ...shipment, events: db.events.filter((e) => e.shipmentId === shipment.id) };
+          return {
+            ...shipment,
+            events: db.events
+              .filter((e) => e.shipmentId === shipment.id)
+              .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime()),
+          };
         }
+
         return shipment;
       }),
       update: jest.fn(async ({ where, data }) => {
@@ -52,9 +61,25 @@ describe("Shipments API (integration)", () => {
     },
     shipmentEvent: {
       create: jest.fn(async ({ data }) => {
-        const event = { id: `evt-${db.events.length + 1}`, ...data, createdAt: new Date() };
+        const event = {
+          id: `evt-${db.events.length + 1}`,
+          ...data,
+          createdAt: data.createdAt ?? new Date(),
+        };
         db.events.push(event);
         return event;
+      }),
+    },
+    shipmentEventOutbox: {
+      create: jest.fn(async ({ data }) => {
+        const item = {
+          id: `obx-${db.outbox.length + 1}`,
+          ...data,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        db.outbox.push(item);
+        return item;
       }),
     },
   };
@@ -115,6 +140,7 @@ describe("Shipments API (integration)", () => {
 
     expect(response.status).toBe(201);
     expect(response.body.trackingId).toMatch(/^CF-\d{8}-[A-Z0-9]{6}$/);
+    expect(db.outbox.length).toBeGreaterThan(0);
   });
 
   it("GET /api/shipments/:trackingId is forbidden for non-owner customer", async () => {
@@ -139,5 +165,18 @@ describe("Shipments API (integration)", () => {
       .send({ status: "IN_TRANSIT" });
 
     expect(response.status).toBe(403);
+  });
+
+  it("PATCH /api/shipments/:trackingId/status rejects invalid transitions with 409", async () => {
+    const shipment = Array.from(db.shipments.values())[0];
+
+    const response = await request(app.getHttpServer())
+      .patch(`/api/shipments/${shipment.trackingId}/status`)
+      .set("Authorization", "Bearer test")
+      .set("x-test-role", "dispatcher")
+      .send({ status: "DELIVERED" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.message).toBe("Invalid shipment status transition");
   });
 });

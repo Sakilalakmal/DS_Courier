@@ -4,10 +4,15 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import {
-  type CreateShipmentDto,
-  type ShipmentStatus,
-  type UserRole,
+  CreateShipmentDto,
+  SHIPMENT_STATUS_UPDATED_TOPIC,
+  ShipmentStatus,
+  ShipmentStatusUpdatedEvent,
+  UserRole,
+  shipmentStatusUpdatedEventSchema,
+  userRoles,
 } from "@courierflow/contracts";
+import { randomUUID } from "node:crypto";
 import { PrismaService } from "@/common/prisma/prisma.service.js";
 
 const STAFF_ROLES: UserRole[] = ["admin", "dispatcher", "supervisor", "driver"];
@@ -21,40 +26,80 @@ export class ShipmentsService {
       throw new ForbiddenException("Invalid user");
     }
 
-    const origin = await this.prisma.address.create({
-      data: {
-        userId,
-        ...payload.origin,
-      },
-    });
+    const actorRole = this.normalizeUserRole(role);
 
-    const destination = await this.prisma.address.create({
-      data: {
-        userId,
-        ...payload.destination,
-      },
-    });
+    const shipment = await this.prisma.$transaction(async (tx) => {
+      const origin = await tx.address.create({
+        data: {
+          userId,
+          ...payload.origin,
+        },
+      });
 
-    const shipment = await this.prisma.shipment.create({
-      data: {
-        trackingId: this.generateTrackingId(),
-        customerId: userId,
-        title: payload.title,
-        description: payload.description,
-        status: "CREATED",
-        weightKg: payload.weightKg,
-        originAddressId: origin.id,
-        destinationAddressId: destination.id,
-      },
-    });
+      const destination = await tx.address.create({
+        data: {
+          userId,
+          ...payload.destination,
+        },
+      });
 
-    await this.prisma.shipmentEvent.create({
-      data: {
-        shipmentId: shipment.id,
-        status: "CREATED",
-        note: role === "customer" ? "Created by customer" : "Created by staff",
-        actorId: userId,
-      },
+      const createdShipment = await tx.shipment.create({
+        data: {
+          trackingId: this.generateTrackingId(),
+          customerId: userId,
+          title: payload.title,
+          description: payload.description,
+          status: "CREATED",
+          weightKg: payload.weightKg,
+          originAddressId: origin.id,
+          destinationAddressId: destination.id,
+        },
+      });
+
+      const eventId = randomUUID();
+      const occurredAt = new Date();
+      const event = shipmentStatusUpdatedEventSchema.parse({
+        eventType: SHIPMENT_STATUS_UPDATED_TOPIC,
+        eventId,
+        timestamp: occurredAt.toISOString(),
+        payload: {
+          trackingId: createdShipment.trackingId,
+          oldStatus: "CREATED",
+          newStatus: "CREATED",
+          location: null,
+          actorId: userId,
+          actorRole,
+        },
+      }) satisfies ShipmentStatusUpdatedEvent;
+
+      await tx.shipmentEvent.create({
+        data: {
+          eventId,
+          shipmentId: createdShipment.id,
+          trackingId: createdShipment.trackingId,
+          oldStatus: "CREATED",
+          newStatus: "CREATED",
+          note: actorRole === "customer" ? "Created by customer" : "Created by staff",
+          actorId: userId,
+          actorRole,
+          occurredAt,
+          locationLat: null,
+          locationLng: null,
+        },
+      });
+
+      await tx.shipmentEventOutbox.create({
+        data: {
+          eventId,
+          topic: SHIPMENT_STATUS_UPDATED_TOPIC,
+          partitionKey: createdShipment.trackingId,
+          payload: JSON.stringify(event),
+          status: "PENDING",
+          attemptCount: 0,
+        },
+      });
+
+      return createdShipment;
     });
 
     return this.toSummary(shipment);
@@ -76,7 +121,7 @@ export class ShipmentsService {
       where: { trackingId },
       include: {
         events: {
-          orderBy: { createdAt: "asc" },
+          orderBy: { occurredAt: "asc" },
         },
       },
     });
@@ -99,39 +144,32 @@ export class ShipmentsService {
         destinationAddressId: shipment.destinationAddressId,
         events: shipment.events.map((event) => ({
           id: event.id,
-          status: event.status,
+          eventId: event.eventId,
+          oldStatus: event.oldStatus,
+          newStatus: event.newStatus,
           note: event.note,
           actorId: event.actorId,
+          actorRole: event.actorRole,
+          location:
+            event.locationLat != null && event.locationLng != null
+              ? {
+                  lat: event.locationLat,
+                  lng: event.locationLng,
+                }
+              : null,
+          occurredAt: event.occurredAt.toISOString(),
           createdAt: event.createdAt.toISOString(),
         })),
       },
     };
   }
 
-  async patchStatus(trackingId: string, status: ShipmentStatus, note: string | undefined, actorId: string) {
-    const shipment = await this.prisma.shipment.findUnique({ where: { trackingId } });
-
-    if (!shipment) {
-      throw new NotFoundException("Shipment not found");
+  private normalizeUserRole(role: string): UserRole {
+    if (userRoles.includes(role as UserRole)) {
+      return role as UserRole;
     }
 
-    const updatedShipment = await this.prisma.shipment.update({
-      where: { trackingId },
-      data: {
-        status,
-      },
-    });
-
-    await this.prisma.shipmentEvent.create({
-      data: {
-        shipmentId: shipment.id,
-        status,
-        note,
-        actorId,
-      },
-    });
-
-    return this.toSummary(updatedShipment);
+    return "customer";
   }
 
   private generateTrackingId() {
@@ -162,7 +200,7 @@ export class ShipmentsService {
       id: shipment.id,
       trackingId: shipment.trackingId,
       title: shipment.title,
-      status: shipment.status,
+      status: shipment.status as ShipmentStatus,
       customerId: shipment.customerId,
       createdAt: shipment.createdAt.toISOString(),
       updatedAt: shipment.updatedAt.toISOString(),

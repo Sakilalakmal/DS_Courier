@@ -3,14 +3,12 @@ import {
   Controller,
   Get,
   Param,
-  Patch,
   Post,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import {
   createShipmentDtoSchema,
-  updateShipmentStatusDtoSchema,
 } from "@courierflow/contracts";
 import { ShipmentsService } from "./shipments.service.js";
 import { JwtGuard } from "@/common/auth/jwt.guard.js";
@@ -48,14 +46,4 @@ export class ShipmentsController {
     return this.shipmentsService.getByTrackingId(trackingId, req.user.sub, req.user.role);
   }
 
-  @Patch(":trackingId/status")
-  @Roles("admin", "dispatcher", "supervisor", "driver")
-  async patchStatus(
-    @Param("trackingId") trackingId: string,
-    @Body() payload: unknown,
-    @Req() req: RequestWithUser,
-  ) {
-    const dto = updateShipmentStatusDtoSchema.parse(payload);
-    return this.shipmentsService.patchStatus(trackingId, dto.status, dto.note, req.user.sub);
-  }
 }

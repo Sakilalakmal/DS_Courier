@@ -32,3 +32,21 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   return data as T;
 }
+
+export async function publicApiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${backendUrl}/api${path}`, {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.message ?? "API request failed");
+  }
+
+  return data as T;
+}
