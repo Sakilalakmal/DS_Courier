@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String          @id @default(cuid())
+  name          String
+  email         String          @unique
+  emailVerified Boolean         @default(false)
+  image         String?
+  role          String          @default("customer")
+  banned        Boolean         @default(false)
+  banReason     String?
+  banExpires    DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  addresses     Address[]
+  shipments     Shipment[]      @relation("CustomerShipments")
+  shipmentEvents ShipmentEvent[] @relation("ActorEvents")
+  roleEntity    Role            @relation("UserRole", fields: [role], references: [code], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([role])
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  token         String   @unique
+  userId        String
+  expiresAt     DateTime
+  ipAddress     String?
+  userAgent     String?
+  impersonatedBy String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model Jwks {
+  id         String   @id @default(cuid())
+  publicKey  String
+  privateKey String
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime?
+}
+
+model Role {
+  code        String @id
+  label       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[] @relation("UserRole")
+}
+
+model Address {
+  id          String    @id @default(cuid())
+  userId      String
+  line1       String
+  line2       String?
+  city        String
+  state       String
+  postalCode  String
+  country     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  originFor   Shipment[] @relation("OriginAddress")
+  destinationFor Shipment[] @relation("DestinationAddress")
+
+  @@index([userId])
+}
+
+model Shipment {
+  id                   String         @id @default(cuid())
+  trackingId           String         @unique
+  customerId           String
+  title                String
+  description          String?
+  status               String         @default("CREATED")
+  weightKg             Float
+  originAddressId      String
+  destinationAddressId String
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  customer             User           @relation("CustomerShipments", fields: [customerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  origin               Address        @relation("OriginAddress", fields: [originAddressId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  destination          Address        @relation("DestinationAddress", fields: [destinationAddressId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  events               ShipmentEvent[]
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+}
+
+model ShipmentEvent {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  status      String
+  note        String?
+  actorId     String
+  createdAt   DateTime @default(now())
+
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  actor       User     @relation("ActorEvents", fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([shipmentId, createdAt])
+}

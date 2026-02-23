@@ -1,0 +1,11 @@
+{
+  "name": "@courierflow/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "eslint",
+    "tsconfig",
+    "prettier.cjs"
+  ]
+}
